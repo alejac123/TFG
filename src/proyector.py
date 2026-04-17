@@ -38,32 +38,109 @@ HOLD_SECONDS = 0.6
 
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
-# ---------- Exploraciones ----------
+# ============================================================
+# EXPLORACIONES ORGANIZADAS POR CATEGORÍA
+# ============================================================
 exploraciones = {
     "abdomen": {
-        "roi": np.array([[20, 20], [80, 20], [80, 80], [20, 80]], dtype=np.float32),
-        "target": np.array([[[50, 50]]], dtype=np.float32)
+        "hepatica": {
+            "roi": np.array([[58, 12], [90, 12], [90, 38], [58, 38]], dtype=np.float32),
+            "target": np.array([[[74, 25]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 70,
+            "alto_sonda": 20
+        },
+        "epigastrica": {
+            "roi": np.array([[35, 12], [65, 12], [65, 38], [35, 38]], dtype=np.float32),
+            "target": np.array([[[50, 25]]], dtype=np.float32),
+            "orientacion": "horizontal",
+            "ancho_sonda": 90,
+            "alto_sonda": 25
+        },
+        "esplenica": {
+            "roi": np.array([[10, 12], [42, 12], [42, 38], [10, 38]], dtype=np.float32),
+            "target": np.array([[[26, 25]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 70,
+            "alto_sonda": 20
+        },
+        "flanco_derecho": {
+            "roi": np.array([[60, 35], [88, 35], [88, 62], [60, 62]], dtype=np.float32),
+            "target": np.array([[[74, 48]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 75,
+            "alto_sonda": 22
+        },
+        "flanco_izquierdo": {
+            "roi": np.array([[12, 35], [40, 35], [40, 62], [12, 62]], dtype=np.float32),
+            "target": np.array([[[26, 48]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 75,
+            "alto_sonda": 22
+        },
+        "suprapubica": {
+            "roi": np.array([[35, 70], [65, 70], [65, 94], [35, 94]], dtype=np.float32),
+            "target": np.array([[[50, 82]]], dtype=np.float32),
+            "orientacion": "horizontal",
+            "ancho_sonda": 80,
+            "alto_sonda": 25
+        }
     },
-    "suprapubica": {
-        "roi": np.array([[30, 60], [70, 60], [70, 95], [30, 95]], dtype=np.float32),
-        "target": np.array([[[50, 78]]], dtype=np.float32)
-    },
-    "hepatica": {
-        "roi": np.array([[20, 10], [85, 10], [85, 50], [20, 50]], dtype=np.float32),
-        "target": np.array([[[60, 30]]], dtype=np.float32)
+    "tiroides": {
+        "transversal": {
+            "roi": np.array([[30, 35], [70, 35], [70, 50], [30, 50]], dtype=np.float32),
+            "target": np.array([[[50, 42]]], dtype=np.float32),
+            "orientacion": "horizontal",
+            "ancho_sonda": 70,
+            "alto_sonda": 18
+        },
+        "longitudinal_derecha": {
+            "roi": np.array([[55, 25], [70, 25], [70, 60], [55, 60]], dtype=np.float32),
+            "target": np.array([[[62, 42]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 60,
+            "alto_sonda": 18
+        },
+        "longitudinal_izquierda": {
+            "roi": np.array([[30, 25], [45, 25], [45, 60], [30, 60]], dtype=np.float32),
+            "target": np.array([[[38, 42]]], dtype=np.float32),
+            "orientacion": "vertical",
+            "ancho_sonda": 60,
+            "alto_sonda": 18
+        }
     }
 }
 
-modo_actual = "abdomen"
+# ---------- Estado actual ----------
+categoria_actual = "abdomen"
+lista_exploraciones = list(exploraciones[categoria_actual].keys())
+indice_exploracion = 0
 
-print("Pulsa q para salir | 1 abdomen | 2 suprapubica | 3 hepatica")
+# ---------- Ajuste manual del médico ----------
+ajuste_manual = False
+offset_x = 0.0
+offset_y = 0.0
+scale_x = 1.0
+scale_y = 1.0
+
+MOVE_STEP = 2.0
+SCALE_STEP = 0.05
+MIN_SCALE = 0.4
+MAX_SCALE = 1.8
+
+print("Pulsa q para salir")
+print("c: cambiar categoria (abdomen / tiroides)")
+print("n: siguiente exploracion")
+print("b: exploracion anterior")
+print("m: activar/desactivar ajuste manual")
+print("Mover ROI: w/a/s/d")
+print("Tamano ROI: i/k/j/l")
 
 while True:
     ok, frame = cap.read()
     if not ok:
         break
 
-    # Imagen negra para simular proyector
     proyector = np.zeros_like(frame)
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -90,6 +167,9 @@ while True:
         if mid in last_centers and (now - last_seen_time.get(mid, 0)) <= HOLD_SECONDS:
             centers[mid] = last_centers[mid]
 
+    nombre_exploracion = lista_exploraciones[indice_exploracion]
+    config = exploraciones[categoria_actual][nombre_exploracion]
+
     if required_ids.issubset(centers.keys()):
         pts = np.array([centers[i] for i in [0, 1, 2, 3]], dtype=np.float32)
 
@@ -108,8 +188,32 @@ while True:
 
         H, _ = cv2.findHomography(virtual_pts, image_pts)
 
-        roi_virtual = exploraciones[modo_actual]["roi"].reshape(-1, 1, 2)
-        target_virtual = exploraciones[modo_actual]["target"]
+        # ---------- ROI base ----------
+        roi_base = config["roi"].copy()
+        target_base = config["target"].copy()
+
+        # Centro ROI base
+        centro_roi = np.mean(roi_base, axis=0)
+
+        # Escalado respecto al centro
+        roi_ajustada = (roi_base - centro_roi) * np.array([scale_x, scale_y]) + centro_roi
+
+        # Desplazamiento manual
+        roi_ajustada[:, 0] += offset_x
+        roi_ajustada[:, 1] += offset_y
+
+        target_ajustada = target_base.copy()
+        target_ajustada[:, :, 0] += offset_x
+        target_ajustada[:, :, 1] += offset_y
+
+        # Limitar al espacio virtual
+        roi_ajustada[:, 0] = np.clip(roi_ajustada[:, 0], 0, 100)
+        roi_ajustada[:, 1] = np.clip(roi_ajustada[:, 1], 0, 100)
+        target_ajustada[:, :, 0] = np.clip(target_ajustada[:, :, 0], 0, 100)
+        target_ajustada[:, :, 1] = np.clip(target_ajustada[:, :, 1], 0, 100)
+
+        roi_virtual = roi_ajustada.reshape(-1, 1, 2).astype(np.float32)
+        target_virtual = target_ajustada.astype(np.float32)
 
         roi_real = cv2.perspectiveTransform(roi_virtual, H)
         target_real = cv2.perspectiveTransform(target_virtual, H)
@@ -120,24 +224,13 @@ while True:
         cv2.polylines(frame, [image_pts.astype(int)], True, (0, 255, 0), 2)
         cv2.polylines(frame, [roi_real.astype(int)], True, (0, 255, 255), 2)
 
-        # ---------- HUELLA DE SONDA ----------
+        # ---------- HUELLA ----------
         centro_x = int(tx)
         centro_y = int(ty)
 
-        if modo_actual == "abdomen":
-            ancho_sonda = 100
-            alto_sonda = 25
-            orientacion = "horizontal"
-
-        elif modo_actual == "suprapubica":
-            ancho_sonda = 80
-            alto_sonda = 25
-            orientacion = "horizontal"
-
-        elif modo_actual == "hepatica":
-            ancho_sonda = 70
-            alto_sonda = 20
-            orientacion = "vertical"
+        orientacion = config["orientacion"]
+        ancho_sonda = config["ancho_sonda"]
+        alto_sonda = config["alto_sonda"]
 
         if orientacion == "horizontal":
             x1 = centro_x - ancho_sonda // 2
@@ -167,7 +260,7 @@ while True:
             2
         )
 
-        # Dibujos en simulación de proyector
+        # ---------- Proyector ----------
         cv2.polylines(proyector, [roi_real.astype(int)], True, (0, 255, 255), 3)
 
         if orientacion == "horizontal":
@@ -212,9 +305,11 @@ while True:
             2
         )
 
+    estado_manual = "ON" if ajuste_manual else "OFF"
+
     cv2.putText(
         frame,
-        f"Modo: {modo_actual}",
+        f"Categoria: {categoria_actual}",
         (20, 65),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
@@ -223,12 +318,62 @@ while True:
     )
 
     cv2.putText(
+        frame,
+        f"Exploracion: {nombre_exploracion}",
+        (20, 100),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        f"Ajuste medico: {estado_manual}",
+        (20, 135),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        frame,
+        "c categoria | n siguiente | b anterior | m ajuste",
+        (20, 170),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (200, 200, 200),
+        1
+    )
+
+    cv2.putText(
         proyector,
-        f"SIMULACION PROYECTOR - {modo_actual}",
+        f"CATEGORIA: {categoria_actual}",
         (20, 40),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
         (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        proyector,
+        f"EXPLORACION: {nombre_exploracion}",
+        (20, 75),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2
+    )
+
+    cv2.putText(
+        proyector,
+        f"AJUSTE MEDICO: {estado_manual}",
+        (20, 110),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 255, 255),
         2
     )
 
@@ -239,12 +384,54 @@ while True:
 
     if key == ord("q"):
         break
-    elif key == ord("1"):
-        modo_actual = "abdomen"
-    elif key == ord("2"):
-        modo_actual = "suprapubica"
-    elif key == ord("3"):
-        modo_actual = "hepatica"
+
+    elif key == ord("c"):
+        if categoria_actual == "abdomen":
+            categoria_actual = "tiroides"
+        else:
+            categoria_actual = "abdomen"
+
+        lista_exploraciones = list(exploraciones[categoria_actual].keys())
+        indice_exploracion = 0
+        offset_x = 0.0
+        offset_y = 0.0
+        scale_x = 1.0
+        scale_y = 1.0
+
+    elif key == ord("n"):
+        indice_exploracion = (indice_exploracion + 1) % len(lista_exploraciones)
+        offset_x = 0.0
+        offset_y = 0.0
+        scale_x = 1.0
+        scale_y = 1.0
+
+    elif key == ord("b"):
+        indice_exploracion = (indice_exploracion - 1) % len(lista_exploraciones)
+        offset_x = 0.0
+        offset_y = 0.0
+        scale_x = 1.0
+        scale_y = 1.0
+
+    elif key == ord("m"):
+        ajuste_manual = not ajuste_manual
+
+    elif ajuste_manual:
+        if key == ord("w"):
+            offset_y -= MOVE_STEP
+        elif key == ord("s"):
+            offset_y += MOVE_STEP
+        elif key == ord("a"):
+            offset_x -= MOVE_STEP
+        elif key == ord("d"):
+            offset_x += MOVE_STEP
+        elif key == ord("j"):
+            scale_x = max(MIN_SCALE, scale_x - SCALE_STEP)
+        elif key == ord("l"):
+            scale_x = min(MAX_SCALE, scale_x + SCALE_STEP)
+        elif key == ord("i"):
+            scale_y = min(MAX_SCALE, scale_y + SCALE_STEP)
+        elif key == ord("k"):
+            scale_y = max(MIN_SCALE, scale_y - SCALE_STEP)
 
 cap.release()
 cv2.destroyAllWindows()
