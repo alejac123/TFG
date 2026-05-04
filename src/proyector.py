@@ -34,7 +34,7 @@ required_ids = {0, 1, 2, 3}
 # ---------- Memoria ----------
 last_centers = {}
 last_seen_time = {}
-HOLD_SECONDS = 0.6
+HOLD_SECONDS = 2.0
 
 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
